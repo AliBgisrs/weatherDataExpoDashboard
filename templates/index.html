@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>EcoData Pro | Advanced GIS</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #f0f2f5; font-family: 'Segoe UI', sans-serif; }
+        #map { height: 400px; width: 100%; border-radius: 12px; margin-bottom: 20px; border: 2px solid #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .sidebar { background: #1a252f; color: white; min-height: 100vh; padding: 25px; display: flex; flex-direction: column; }
+        .chart-card { background: white; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+        .summary-card { background: #fff; border-left: 5px solid #3498db; border-radius: 8px; padding: 15px; text-align: center; }
+        .developer-info { margin-top: auto; padding-top: 20px; border-top: 1px solid #34495e; font-size: 0.85rem; color: #bdc3c7; }
+    </style>
+</head>
+<body>
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-3 sidebar">
+            <h4>EcoData Pro</h4>
+            <hr>
+            <div class="mb-3">
+                <label class="form-label small">Start Date</label>
+                <input type="date" id="startDate" class="form-control" value="2023-01-01">
+            </div>
+            <div class="mb-3">
+                <label class="form-label small">End Date</label>
+                <input type="date" id="endDate" class="form-control" value="2023-12-31">
+            </div>
+            
+            <button class="btn btn-primary w-100 mb-2" onclick="processData()">Analyze Area</button>
+            <a href="/download" class="btn btn-success w-100 mb-4">Download Excel (All Data)</a>
+            
+            <div class="alert alert-info py-2 small" style="background: #2c3e50; border: none; color: #aec6cf;">
+                <strong>NDVI Proxy:</strong> Shown via Skin Temp & Solar Irradiance.
+            </div>
+
+            <div class="developer-info">
+                Developed by <strong>Ali Bazrafkan</strong><br>
+                📞 7017299088
+            </div>
+        </div>
+
+        <div class="col-md-9 p-4">
+            <div class="row mb-4" id="summaryStats" style="display: none;">
+                <div class="col-md-4"><div class="summary-card"><h6>Max Temp</h6><h4 id="statMaxTemp" class="text-danger">--</h4></div></div>
+                <div class="col-md-4"><div class="summary-card"><h6>Min Temp</h6><h4 id="statMinTemp" class="text-primary">--</h4></div></div>
+                <div class="col-md-4"><div class="summary-card"><h6>Total Rain</h6><h4 id="statTotalRain" class="text-info">--</h4></div></div>
+            </div>
+
+            <div id="map"></div>
+            
+            <div class="row">
+                <div class="col-lg-6">
+                    <div class="chart-card">
+                        <div id="tempChart"></div>
+                        <button class="btn btn-sm btn-outline-secondary w-100 mt-2" onclick="downloadChart('tempChart')">Download Plot</button>
+                    </div>
+                </div>
+                <div class="col-lg-6">
+                    <div class="chart-card">
+                        <div id="healthChart"></div>
+                        <button class="btn btn-sm btn-outline-secondary w-100 mt-2" onclick="downloadChart('healthChart')">Download Plot</button>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <div class="chart-card">
+                        <div id="precipChart"></div>
+                        <button class="btn btn-sm btn-outline-secondary w-100 mt-2" onclick="downloadChart('precipChart')">Download Plot</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+
+<script>
+    var map = L.map('map').setView([20, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    var drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+    var drawControl = new L.Control.Draw({
+        draw: { polyline: false, circle: false, marker: true, rectangle: true, polygon: true },
+        edit: { featureGroup: drawnItems }
+    });
+    map.addControl(drawControl);
+
+    let selection = null;
+    map.on(L.Draw.Event.CREATED, (e) => {
+        drawnItems.clearLayers();
+        selection = { 
+            type: e.layerType, 
+            coords: e.layerType === 'marker' ? e.layer.getLatLng() : e.layer.getLatLngs()[0] 
+        };
+        drawnItems.addLayer(e.layer);
+    });
+
+    async function processData() {
+        if (!selection) return alert("Select an area first.");
+        const res = await fetch('/get_weather_data', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({...selection, start_date: document.getElementById('startDate').value, end_date: document.getElementById('endDate').value})
+        });
+        const json = await res.json();
+        if (json.status === 'success') {
+            updateSummary(json.data);
+            renderCharts(json);
+        }
+    }
+
+    function updateSummary(data) {
+        const temps = data.temperature_2m;
+        const rains = data.precipitation;
+        
+        document.getElementById('summaryStats').style.display = 'flex';
+        document.getElementById('statMaxTemp').innerText = Math.max(...temps).toFixed(1) + " °C";
+        document.getElementById('statMinTemp').innerText = Math.min(...temps).toFixed(1) + " °C";
+        document.getElementById('statTotalRain').innerText = rains.reduce((a, b) => a + b, 0).toFixed(1) + " mm";
+    }
+
+    function renderCharts(res) {
+        const h = res.data;
+        const n = res.nasa;
+        const cfg = { autosize: true, margin: { t: 40, b: 40, l: 50, r: 50 } };
+
+        Plotly.newPlot('tempChart', [
+            { x: h.time, y: h.temperature_2m, name: 'Air Temp', line: {color: 'red'} },
+            { x: h.time, y: h.soil_moisture_0_to_7cm, name: 'Soil Moist', yaxis: 'y2', line: {color: 'blue'} }
+        ], { ...cfg, title: 'Temperature & Soil Moisture', yaxis2: {overlaying: 'y', side: 'right'} });
+
+        const nDates = Object.keys(n.TS).map(d => `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`);
+        Plotly.newPlot('healthChart', [
+            { x: nDates, y: Object.values(n.TS), name: 'LST (Skin Temp)', line: {color: 'orange'} },
+            { x: nDates, y: Object.values(n.ALLSKY_SFC_SW_DWN), name: 'Solar Energy', yaxis: 'y2', type: 'bar', opacity: 0.3 }
+        ], { ...cfg, title: 'Vegetation Health Proxies', yaxis2: {overlaying: 'y', side: 'right'} });
+
+        Plotly.newPlot('precipChart', [
+            { x: h.time, y: h.precipitation, type: 'bar', name: 'Rainfall' }
+        ], { ...cfg, title: 'Historical Precipitation' });
+    }
+
+    function downloadChart(divId) {
+        Plotly.downloadImage(divId, {format: 'png', width: 1200, height: 600, filename: divId + '_export'});
+    }
+</script>
+</body>
+</html>
