@@ -1,0 +1,15 @@
+# Web Framework
+Flask
+
+# Data Processing and Math
+pandas
+numpy
+
+# API Requests
+requests
+
+# Excel Exporting
+openpyxl
+
+# Server (Optional, for production-like behavior)
+gunicorn
